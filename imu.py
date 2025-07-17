@@ -70,6 +70,9 @@ PRUNING_INTERVAL = 10
 # Tight limit slightly above baseline to avoid memory-hungry models
 MAX_PARAMETERS = 12_000_000
 
+# Early stopping patience
+EARLY_STOPPING_PATIENCE = 10
+
 
 # Paths
 BASE_DATA_DIR = r"R:\KumarLab3\PROJECTS\wesens\Data\Analysis\smith_dl\IMU Deep Learning\Data\allnew_20220325_raw_byDeepak_csv\INC_ByStep\INC_ByZero\Included_checked\SAVE_dataSet"
@@ -120,7 +123,7 @@ ensure_dir(OPTUNA_DIR)
 
 class EarlyStopping:
     """Early stopping utility"""
-    def __init__(self, patience=20, min_delta=0.001):
+    def __init__(self, patience=EARLY_STOPPING_PATIENCE, min_delta=0.001):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -380,7 +383,6 @@ def suggest_training_params(trial):
         'use_scheduler': trial.suggest_categorical('use_scheduler', [True, False]),
         'scheduler_patience': trial.suggest_int('scheduler_patience', 5, 25),
         'scheduler_factor': trial.suggest_float('scheduler_factor', 0.1, 0.8),
-        'early_stopping_patience': trial.suggest_int('early_stopping_patience', 20, 40),  # Range around trial patience
         'max_grad_norm': trial.suggest_float('max_grad_norm', 0.5, 5.0)
     }
 
@@ -600,9 +602,9 @@ def objective(trial):
                     patience=train_config['scheduler_patience'], min_lr=1e-7
                 )
             
-            # Early stopping using sampled patience
+            # Early stopping with fixed patience
             early_stopping = EarlyStopping(
-                patience=train_config['early_stopping_patience'],
+                patience=EARLY_STOPPING_PATIENCE,
                 min_delta=0.001
             )
             early_stopping.max_grad_norm = train_config['max_grad_norm']
@@ -734,9 +736,9 @@ def main():
                 patience=train_config['scheduler_patience'], min_lr=1e-7
             )
         
-        # Early stopping using sampled patience
+        # Early stopping with fixed patience
         early_stopping = EarlyStopping(
-            patience=train_config['early_stopping_patience'],
+            patience=EARLY_STOPPING_PATIENCE,
             min_delta=0.001
         )
         early_stopping.max_grad_norm = train_config['max_grad_norm']
