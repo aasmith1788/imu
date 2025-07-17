@@ -12,7 +12,7 @@ Features:
 - Comprehensive TensorBoard logging for overfitting detection
 - Cross-validation with early stopping and pruning
 - Model saving and evaluation
-- MEMORY-SAFE: 79M parameter limit to prevent CUDA OOM errors
+- MEMORY-SAFE: ~12M parameter limit to prevent CUDA OOM errors
 """
 
 import subprocess
@@ -44,16 +44,18 @@ required_packages = [
     "tensorboard", "optuna", "optuna-dashboard"
 ]
 
-print("Installing required packages...")
-for package in required_packages:
-    try:
-        __import__(package.replace("-", "_"))
-        print(f"✓ {package} already installed")
-    except ImportError:
-        print(f"Installing {package}...")
-        install_package(package)
+def install_requirements():
+    """Install required packages if they're missing."""
+    print("Installing required packages...")
+    for package in required_packages:
+        try:
+            __import__(package.replace("-", "_"))
+            print(f"✓ {package} already installed")
+        except ImportError:
+            print(f"Installing {package}...")
+            install_package(package)
 
-print("All packages ready!\n")
+    print("All packages ready!\n")
 
 # Configuration
 DATASET_NAME = 'IWALQQ_1st_correction'
@@ -65,11 +67,9 @@ MAX_EPOCHS_FINAL = 500  # Epochs for final model training
 PRUNING_INTERVAL = 10
 
 # MEMORY MANAGEMENT SETTINGS
-MAX_PARAMETERS = 79_000_000  # 79M parameter limit based on successful Trial 25
+# Tight limit slightly above baseline to avoid memory-hungry models
+MAX_PARAMETERS = 12_000_000
 
-# Early stopping patience settings
-TRIAL_EARLY_STOPPING_PATIENCE = 30   # Shorter for trials (faster optimization)
-FINAL_EARLY_STOPPING_PATIENCE = 40  # Original value for final training (better performance)
 
 # Paths
 BASE_DATA_DIR = r"R:\KumarLab3\PROJECTS\wesens\Data\Analysis\smith_dl\IMU Deep Learning\Data\allnew_20220325_raw_byDeepak_csv\INC_ByStep\INC_ByZero\Included_checked\SAVE_dataSet"
@@ -202,7 +202,7 @@ class ConfigurableModel(nn.Module):
             elif self.config['activation'] == 'swish':
                 x = F.silu(x)
             elif self.config['activation'] == 'tanh':
-                x = F.tanh(x)
+                x = torch.tanh(x)
             elif self.config['activation'] == 'leaky_relu':
                 x = F.leaky_relu(x, 0.1)
             
@@ -279,8 +279,8 @@ def nRMSE_axis_batch(pred, target, axis, scaler):
         target_axis = target[i].view(3, -1).t()[:, axis_idx]
         
         # Denormalize
-        pred_axis = (pred_axis - scaler.min_[axis_idx]) / scaler.scale_[axis_idx]
-        target_axis = (target_axis - scaler.min_[axis_idx]) / scaler.scale_[axis_idx]
+        pred_axis = pred_axis * scaler.scale_[axis_idx] + scaler.min_[axis_idx]
+        target_axis = target_axis * scaler.scale_[axis_idx] + scaler.min_[axis_idx]
         
         # Calculate nRMSE
         rmse = torch.sqrt(torch.mean((pred_axis - target_axis) ** 2))
@@ -600,9 +600,9 @@ def objective(trial):
                     patience=train_config['scheduler_patience'], min_lr=1e-7
                 )
             
-            # Early stopping (use trial patience for optimization)
+            # Early stopping using sampled patience
             early_stopping = EarlyStopping(
-                patience=TRIAL_EARLY_STOPPING_PATIENCE,  # Use shorter patience for trials
+                patience=train_config['early_stopping_patience'],
                 min_delta=0.001
             )
             early_stopping.max_grad_norm = train_config['max_grad_norm']
@@ -734,9 +734,9 @@ def main():
                 patience=train_config['scheduler_patience'], min_lr=1e-7
             )
         
-        # Early stopping (use longer patience for final training)
+        # Early stopping using sampled patience
         early_stopping = EarlyStopping(
-            patience=FINAL_EARLY_STOPPING_PATIENCE,  # Use original 110 epochs patience
+            patience=train_config['early_stopping_patience'],
             min_delta=0.001
         )
         early_stopping.max_grad_norm = train_config['max_grad_norm']
@@ -826,4 +826,5 @@ def main():
     print(f"  tensorboard --logdir {LOGS_DIR}")
 
 if __name__ == "__main__":
+    install_requirements()
     main()
