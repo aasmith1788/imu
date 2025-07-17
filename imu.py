@@ -12,7 +12,7 @@ Features:
 - Comprehensive TensorBoard logging for overfitting detection
 - Cross-validation with early stopping and pruning
 - Model saving and evaluation
-- MEMORY-SAFE: 79M parameter limit to prevent CUDA OOM errors
+- MEMORY-SAFE: ~500k parameter limit to prevent CUDA OOM errors
 """
 
 import subprocess
@@ -44,16 +44,18 @@ required_packages = [
     "tensorboard", "optuna", "optuna-dashboard"
 ]
 
-print("Installing required packages...")
-for package in required_packages:
-    try:
-        __import__(package.replace("-", "_"))
-        print(f"✓ {package} already installed")
-    except ImportError:
-        print(f"Installing {package}...")
-        install_package(package)
+def install_requirements():
+    """Install required packages if they're missing."""
+    print("Installing required packages...")
+    for package in required_packages:
+        try:
+            __import__(package.replace("-", "_"))
+            print(f"✓ {package} already installed")
+        except ImportError:
+            print(f"Installing {package}...")
+            install_package(package)
 
-print("All packages ready!\n")
+    print("All packages ready!\n")
 
 # Configuration
 DATASET_NAME = 'IWALQQ_1st_correction'
@@ -65,11 +67,12 @@ MAX_EPOCHS_FINAL = 500  # Epochs for final model training
 PRUNING_INTERVAL = 10
 
 # MEMORY MANAGEMENT SETTINGS
-MAX_PARAMETERS = 79_000_000  # 79M parameter limit based on successful Trial 25
+# Tight limit to avoid memory-hungry models
+MAX_PARAMETERS = 500_000
 
-# Early stopping patience settings
-TRIAL_EARLY_STOPPING_PATIENCE = 30   # Shorter for trials (faster optimization)
-FINAL_EARLY_STOPPING_PATIENCE = 40  # Original value for final training (better performance)
+# Early stopping patience
+EARLY_STOPPING_PATIENCE = 10
+
 
 # Paths
 BASE_DATA_DIR = r"R:\KumarLab3\PROJECTS\wesens\Data\Analysis\smith_dl\IMU Deep Learning\Data\allnew_20220325_raw_byDeepak_csv\INC_ByStep\INC_ByZero\Included_checked\SAVE_dataSet"
@@ -120,7 +123,7 @@ ensure_dir(OPTUNA_DIR)
 
 class EarlyStopping:
     """Early stopping utility"""
-    def __init__(self, patience=20, min_delta=0.001):
+    def __init__(self, patience=EARLY_STOPPING_PATIENCE, min_delta=0.001):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -202,7 +205,7 @@ class ConfigurableModel(nn.Module):
             elif self.config['activation'] == 'swish':
                 x = F.silu(x)
             elif self.config['activation'] == 'tanh':
-                x = F.tanh(x)
+                x = torch.tanh(x)
             elif self.config['activation'] == 'leaky_relu':
                 x = F.leaky_relu(x, 0.1)
             
@@ -279,8 +282,8 @@ def nRMSE_axis_batch(pred, target, axis, scaler):
         target_axis = target[i].view(3, -1).t()[:, axis_idx]
         
         # Denormalize
-        pred_axis = (pred_axis - scaler.min_[axis_idx]) / scaler.scale_[axis_idx]
-        target_axis = (target_axis - scaler.min_[axis_idx]) / scaler.scale_[axis_idx]
+        pred_axis = pred_axis * scaler.scale_[axis_idx] + scaler.min_[axis_idx]
+        target_axis = target_axis * scaler.scale_[axis_idx] + scaler.min_[axis_idx]
         
         # Calculate nRMSE
         rmse = torch.sqrt(torch.mean((pred_axis - target_axis) ** 2))
@@ -325,9 +328,9 @@ def suggest_architecture(trial):
     # Architecture pattern
     pattern = trial.suggest_categorical('arch_pattern', ['decreasing', 'increasing', 'pyramid', 'uniform'])
     
-    # Layer size range
-    min_size = trial.suggest_int('min_layer_size', 512, 2048)
-    max_size = trial.suggest_int('max_layer_size', 2048, 8192)
+    # Layer size range adjusted for smaller models
+    min_size = trial.suggest_int('min_layer_size', 32, 256)
+    max_size = trial.suggest_int('max_layer_size', 128, 512)
     
     if min_size > max_size:
         min_size, max_size = max_size, min_size
@@ -343,7 +346,7 @@ def suggest_architecture(trial):
         down = np.linspace(max_size, min_size, n_layers - mid, dtype=int)[1:]
         sizes = np.concatenate([up, down])
     else:  # uniform
-        size = trial.suggest_int('uniform_size', min_size, max_size)
+        size = trial.suggest_int('uniform_size', 32, 512)
         sizes = np.full(n_layers, size)
     
     # MEMORY SAFETY CHECK: Calculate total parameters
@@ -380,7 +383,6 @@ def suggest_training_params(trial):
         'use_scheduler': trial.suggest_categorical('use_scheduler', [True, False]),
         'scheduler_patience': trial.suggest_int('scheduler_patience', 5, 25),
         'scheduler_factor': trial.suggest_float('scheduler_factor', 0.1, 0.8),
-        'early_stopping_patience': trial.suggest_int('early_stopping_patience', 20, 40),  # Range around trial patience
         'max_grad_norm': trial.suggest_float('max_grad_norm', 0.5, 5.0)
     }
 
@@ -600,9 +602,9 @@ def objective(trial):
                     patience=train_config['scheduler_patience'], min_lr=1e-7
                 )
             
-            # Early stopping (use trial patience for optimization)
+            # Early stopping with fixed patience
             early_stopping = EarlyStopping(
-                patience=TRIAL_EARLY_STOPPING_PATIENCE,  # Use shorter patience for trials
+                patience=EARLY_STOPPING_PATIENCE,
                 min_delta=0.001
             )
             early_stopping.max_grad_norm = train_config['max_grad_norm']
@@ -643,7 +645,7 @@ def main():
     
     print("Starting Optuna Hyperparameter Optimization")
     print("=" * 50)
-    print(f"Memory Safety: Maximum {MAX_PARAMETERS:,} parameters per model")
+    print(f"Memory Safety: Maximum {MAX_PARAMETERS:,} parameters per model.")
     print("=" * 50)
     
     # Create study
@@ -734,9 +736,9 @@ def main():
                 patience=train_config['scheduler_patience'], min_lr=1e-7
             )
         
-        # Early stopping (use longer patience for final training)
+        # Early stopping with fixed patience
         early_stopping = EarlyStopping(
-            patience=FINAL_EARLY_STOPPING_PATIENCE,  # Use original 110 epochs patience
+            patience=EARLY_STOPPING_PATIENCE,
             min_delta=0.001
         )
         early_stopping.max_grad_norm = train_config['max_grad_norm']
@@ -826,4 +828,5 @@ def main():
     print(f"  tensorboard --logdir {LOGS_DIR}")
 
 if __name__ == "__main__":
+    install_requirements()
     main()
