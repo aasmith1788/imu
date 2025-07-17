@@ -12,7 +12,7 @@ Features:
 - Comprehensive TensorBoard logging for overfitting detection
 - Cross-validation with early stopping and pruning
 - Model saving and evaluation
-- MEMORY-SAFE: ~12M parameter limit to prevent CUDA OOM errors
+- MEMORY-SAFE: ~500k parameter limit to prevent CUDA OOM errors
 """
 
 import subprocess
@@ -67,8 +67,8 @@ MAX_EPOCHS_FINAL = 500  # Epochs for final model training
 PRUNING_INTERVAL = 10
 
 # MEMORY MANAGEMENT SETTINGS
-# Tight limit slightly above baseline to avoid memory-hungry models
-MAX_PARAMETERS = 12_000_000
+# Tight limit to avoid memory-hungry models
+MAX_PARAMETERS = 500_000
 
 # Early stopping patience
 EARLY_STOPPING_PATIENCE = 10
@@ -328,9 +328,9 @@ def suggest_architecture(trial):
     # Architecture pattern
     pattern = trial.suggest_categorical('arch_pattern', ['decreasing', 'increasing', 'pyramid', 'uniform'])
     
-    # Layer size range
-    min_size = trial.suggest_int('min_layer_size', 512, 2048)
-    max_size = trial.suggest_int('max_layer_size', 2048, 8192)
+    # Layer size range adjusted for smaller models
+    min_size = trial.suggest_int('min_layer_size', 32, 256)
+    max_size = trial.suggest_int('max_layer_size', 128, 512)
     
     if min_size > max_size:
         min_size, max_size = max_size, min_size
@@ -346,7 +346,7 @@ def suggest_architecture(trial):
         down = np.linspace(max_size, min_size, n_layers - mid, dtype=int)[1:]
         sizes = np.concatenate([up, down])
     else:  # uniform
-        size = trial.suggest_int('uniform_size', min_size, max_size)
+        size = trial.suggest_int('uniform_size', 32, 512)
         sizes = np.full(n_layers, size)
     
     # MEMORY SAFETY CHECK: Calculate total parameters
@@ -645,7 +645,7 @@ def main():
     
     print("Starting Optuna Hyperparameter Optimization")
     print("=" * 50)
-    print(f"Memory Safety: Maximum {MAX_PARAMETERS:,} parameters per model")
+    print(f"Memory Safety: Maximum {MAX_PARAMETERS:,} parameters per model.")
     print("=" * 50)
     
     # Create study
